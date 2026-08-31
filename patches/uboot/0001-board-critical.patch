@@ -1,0 +1,88 @@
+diff --git a/board/google/veyron/Kconfig b/board/google/veyron/Kconfig
+index 7f55d78d..b5e86559 100644
+--- a/board/google/veyron/Kconfig
++++ b/board/google/veyron/Kconfig
+@@ -12,6 +12,15 @@ config SYS_CONFIG_NAME
+ config BOARD_SPECIFIC_OPTIONS # dummy
+ 	def_bool y
+ 
++config VEYRON_CHAINLOAD
++	bool "Booted via chainload (skip PMIC/PLL init already done by Depthcharge)"
++	help
++	  When U-Boot is chainloaded by Depthcharge (not booted from SPL),
++	  the RK808 PMIC, ARM PLL, and boot-on regulators are already
++	  configured. Re-running veyron_init() in board_early_init_r()
++	  touches already-initialised I2C and clock hardware and can hang.
++	  Say 'y' when building for a ChromeOS depthcharge→U-Boot flow.
++
+ endif
+ 
+ if TARGET_CHROMEBIT_MICKEY
+@@ -28,6 +37,15 @@ config SYS_CONFIG_NAME
+ config BOARD_SPECIFIC_OPTIONS # dummy
+ 	def_bool y
+ 
++config VEYRON_CHAINLOAD
++	bool "Booted via chainload (skip PMIC/PLL init already done by Depthcharge)"
++	help
++	  When U-Boot is chainloaded by Depthcharge (not booted from SPL),
++	  the RK808 PMIC, ARM PLL, and boot-on regulators are already
++	  configured. Re-running veyron_init() in board_early_init_r()
++	  touches already-initialised I2C and clock hardware and can hang.
++	  Say 'y' when building for a ChromeOS depthcharge→U-Boot flow.
++
+ endif
+ 
+ if TARGET_CHROMEBOOK_MINNIE
+@@ -44,6 +62,15 @@ config SYS_CONFIG_NAME
+ config BOARD_SPECIFIC_OPTIONS # dummy
+ 	def_bool y
+ 
++config VEYRON_CHAINLOAD
++	bool "Booted via chainload (skip PMIC/PLL init already done by Depthcharge)"
++	help
++	  When U-Boot is chainloaded by Depthcharge (not booted from SPL),
++	  the RK808 PMIC, ARM PLL, and boot-on regulators are already
++	  configured. Re-running veyron_init() in board_early_init_r()
++	  touches already-initialised I2C and clock hardware and can hang.
++	  Say 'y' when building for a ChromeOS depthcharge→U-Boot flow.
++
+ endif
+ 
+ if TARGET_CHROMEBOOK_SPEEDY
+@@ -60,4 +87,13 @@ config SYS_CONFIG_NAME
+ config BOARD_SPECIFIC_OPTIONS # dummy
+ 	def_bool y
+ 
++config VEYRON_CHAINLOAD
++	bool "Booted via chainload (skip PMIC/PLL init already done by Depthcharge)"
++	help
++	  When U-Boot is chainloaded by Depthcharge (not booted from SPL),
++	  the RK808 PMIC, ARM PLL, and boot-on regulators are already
++	  configured. Re-running veyron_init() in board_early_init_r()
++	  touches already-initialised I2C and clock hardware and can hang.
++	  Say 'y' when building for a ChromeOS depthcharge→U-Boot flow.
++
+ endif
+diff --git a/board/google/veyron/veyron.c b/board/google/veyron/veyron.c
+index 32dbcdc4..c9ca2634 100644
+--- a/board/google/veyron/veyron.c
++++ b/board/google/veyron/veyron.c
+@@ -21,7 +21,7 @@
+  * 'voltage-table' property.
+  */
+ #ifndef CONFIG_SPL_BUILD
+-#if !CONFIG_IS_ENABLED(ROCKCHIP_BACK_TO_BROM)
++#if !CONFIG_IS_ENABLED(ROCKCHIP_BACK_TO_BROM) && !CONFIG_IS_ENABLED(VEYRON_CHAINLOAD)
+ static int veyron_init(void)
+ {
+ 	struct udevice *dev;
+@@ -77,7 +77,7 @@ int board_early_init_r(void)
+ 	struct udevice *dev;
+ 	int ret;
+ 
+-#if !CONFIG_IS_ENABLED(ROCKCHIP_BACK_TO_BROM)
++#if !CONFIG_IS_ENABLED(ROCKCHIP_BACK_TO_BROM) && !CONFIG_IS_ENABLED(VEYRON_CHAINLOAD)
+ 	if (!fdt_node_check_compatible(gd->fdt_blob, 0, "google,veyron")) {
+ 		ret = veyron_init();
+ 		if (ret)

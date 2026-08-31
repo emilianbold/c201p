@@ -1,0 +1,174 @@
+name: Build Debian C201P Image
+
+on:
+  push:
+    branches: ['**']
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    permissions:
+      contents: write   # needed for creating releases and uploading artifacts
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # u-boot/ is a submodule pinned to the exact upstream tag build.sh
+          # patches; the actual U-Boot behavior lives in patches/uboot/, not
+          # in this checkout step.
+          submodules: true
+
+      - name: Free runner disk space
+        run: |
+          # Remove large pre-installed tool bundles we don't need (~15 GB recovered)
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/.ghcup
+          sudo apt-get autoremove -y -qq
+          df -h
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            debootstrap \
+            debian-archive-keyring \
+            qemu-user-static \
+            binfmt-support \
+            gdisk \
+            cgpt \
+            u-boot-tools \
+            vboot-utils \
+            gcc-arm-linux-gnueabihf \
+            bison \
+            flex \
+            libssl-dev \
+            python3-setuptools
+
+      - name: Verify binfmt ARM registration
+        run: |
+          update-binfmts --display qemu-arm || sudo update-binfmts --enable qemu-arm
+
+      # The veyron BCM4354 NVRAM file is small and fetched from ArchLinuxARM's
+      # firmware-veyron source URL, but cache it anyway: it keeps builds
+      # working when upstream is down, and the cache doubles as the place to
+      # drop the file by hand if it ever disappears. Bump the key suffix to
+      # force a refetch.
+      - name: Cache veyron BCM4354 NVRAM
+        uses: actions/cache@v5
+        with:
+          path: firmware-cache
+          key: veyron-brcm-nvram-v1
+
+      - name: Build image
+        run: |
+          sudo IMAGE_FILE=debian-c201p.img \
+               FIRMWARE_CACHE_DIR="${GITHUB_WORKSPACE}/firmware-cache" \
+               ./build.sh
+          # actions/cache saves this path at job end; make it readable to the
+          # runner user, since build.sh populated it as root.
+          sudo chown -R "$USER:$USER" firmware-cache 2>/dev/null || true
+
+      - name: Compress image
+        run: |
+          sudo chown "$USER:$USER" debian-c201p.img debian-c201p-uboot.kpart debian-c201p-uboot-LICENSE.txt debian-c201p-wifi-nvram-LICENSE.txt
+          xz -6 -T0 --verbose debian-c201p.img
+          sha256sum debian-c201p.img.xz > debian-c201p.img.xz.sha256
+          # The kpart is already tiny (signed U-Boot only, no rootfs) --
+          # not worth xz'ing, just checksum it. License texts need no
+          # checksum of their own.
+          sha256sum debian-c201p-uboot.kpart > debian-c201p-uboot.kpart.sha256
+          ls -lh debian-c201p.img.xz debian-c201p-uboot.kpart debian-c201p-uboot-LICENSE.txt debian-c201p-wifi-nvram-LICENSE.txt
+
+      - name: Upload artifact (every build)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: debian-c201p-${{ github.sha }}
+          path: |
+            debian-c201p.img.xz
+            debian-c201p.img.xz.sha256
+            debian-c201p-uboot.kpart
+            debian-c201p-uboot.kpart.sha256
+            debian-c201p-uboot-LICENSE.txt
+            debian-c201p-wifi-nvram-LICENSE.txt
+          # Short retention: each ~160MB image adds up fast against the
+          # account's artifact storage quota. 1 day is enough to flash-test
+          # the same day; the snapshot/tagged release below is the place to
+          # grab a build that needs to stick around longer.
+          retention-days: 1
+
+      # Maven-style timestamped SNAPSHOT: a UTC timestamp plus the
+      # monotonically-increasing run number, so every non-tag push gets its
+      # own permanent tag instead of all builds fighting over one mutable
+      # "latest" tag.
+      - name: Compute snapshot tag
+        if: ${{ !cancelled() && !startsWith(github.ref, 'refs/tags/') }}
+        id: snapshot
+        run: echo "tag=snapshot-$(date -u +%Y%m%dT%H%M%SZ)-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub snapshot release (non-tag pushes)
+        if: ${{ !cancelled() && !startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.snapshot.outputs.tag }}
+          name: Snapshot ${{ steps.snapshot.outputs.tag }}
+          prerelease: true
+          files: |
+            debian-c201p.img.xz
+            debian-c201p.img.xz.sha256
+            debian-c201p-uboot.kpart
+            debian-c201p-uboot.kpart.sha256
+            debian-c201p-uboot-LICENSE.txt
+            debian-c201p-wifi-nvram-LICENSE.txt
+          body: |
+            Automated snapshot build from commit ${{ github.sha }} (run #${{ github.run_number }}).
+
+            Not a stable release — see the [Releases](../../releases) page for tagged versions.
+
+      - name: Create GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            debian-c201p.img.xz
+            debian-c201p.img.xz.sha256
+            debian-c201p-uboot.kpart
+            debian-c201p-uboot.kpart.sha256
+            debian-c201p-uboot-LICENSE.txt
+            debian-c201p-wifi-nvram-LICENSE.txt
+          generate_release_notes: true
+          body: |
+            ## Debian Trixie for Asus C201P
+
+            Flash to a microSD card or USB drive (≥ 8 GB):
+
+            ```
+            # Verify checksum first
+            sha256sum -c debian-c201p.img.xz.sha256
+
+            # Decompress and flash (replace /dev/sdX with your target)
+            xz -d debian-c201p.img.xz
+            sudo dd if=debian-c201p.img of=/dev/sdX bs=4M status=progress conv=fsync
+            ```
+
+            Boot the Chromebook: press **Ctrl+U** at the developer mode screen.
+
+            Default login: `user` / `trixie` — change passwords on first boot.
+
+            `debian-c201p-uboot.kpart` is the signed U-Boot binary alone
+            (the KERN-A partition contents) — for reflashing just U-Boot
+            without touching the rootfs, e.g. `sudo dd if=debian-c201p-uboot.kpart of=/dev/sdX1`.
+            It's GPL-2.0 (U-Boot's own license, not this project's) --
+            see the accompanying `debian-c201p-uboot-LICENSE.txt`.
+
+            `debian-c201p-wifi-nvram-LICENSE.txt` covers the bundled WiFi
+            NVRAM file -- also not this project's own code.
+
+            See `README.md` for full details.

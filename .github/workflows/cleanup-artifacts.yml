@@ -1,0 +1,46 @@
+name: Cleanup Expired Artifacts
+
+# Actual root cause of the Aug 2026 storage-quota incident: GitHub marks an
+# artifact `expired: true` once it passes its retention-days window, but
+# does NOT promptly/reliably physically delete it after that -- artifacts
+# from mid-July sat around, still fully counted against storage, for
+# *weeks* past expiry until this workflow was run by hand. It had only ever
+# been run once (2026-07-02) before that manual cleanup. Schedule it so
+# that gap can't reopen silently.
+on:
+  workflow_dispatch:
+  schedule:
+    # 03:00 UTC daily -- low-traffic hour, no other significance.
+    - cron: '0 3 * * *'
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Delete expired artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.paginate(
+              github.rest.actions.listArtifactsForRepo,
+              { owner: context.repo.owner, repo: context.repo.repo, per_page: 100 }
+            );
+            // Only delete artifacts GitHub has already marked expired --
+            // NOT everything. build.yml's retention-days is 1 day, so a
+            // same-day artifact someone still wants to flash must survive
+            // a daily run; only the ones GitHub itself already considers
+            // past their window (but hasn't gotten around to physically
+            // deleting) are this workflow's job to clean up.
+            const expired = artifacts.filter(a => a.expired);
+            console.log(`Found ${artifacts.length} artifacts, ${expired.length} expired`);
+            for (const artifact of expired) {
+              console.log(`Deleting: ${artifact.name} (${artifact.size_in_bytes} bytes)`);
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id,
+              });
+            }
+            console.log('Done.');

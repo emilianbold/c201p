@@ -1,0 +1,50 @@
+# rk3288 veyron-speedy: modules needed to reach the ext4 root on the SD card.
+# Derived from MODULES=dep on this machine. Do not trim by guessing.
+
+# Power / clock / bus. Without these the SD slot is never powered and no
+# block device appears.
+i2c-rk3x
+rk808-regulator
+clk-rk808
+io-domain
+pwm-rockchip
+
+# SD host controller and root filesystem.
+dw_mmc
+dw_mmc-pltfm
+dw_mmc-rockchip
+ext4
+jbd2
+mbcache
+crc16
+crc32c_generic
+crc32-arm-ce
+
+# ChromeOS EC: keyboard, and the I2C tunnel other peripherals sit behind.
+spi-rockchip
+cros_ec
+cros_ec_spi
+cros_ec_keyb
+matrix-keymap
+evdev
+
+# Display. Not needed to reach root; included so the framebuffer console
+# works during initramfs, which is the only way to see early boot output on
+# a machine with no serial port.
+rockchipdrm
+analogix_dp
+panel-edp
+phy-rockchip-dp
+drm
+drm_kms_helper
+drm_display_helper
+drm_dma_helper
+drm_dp_aux_bus
+dw-hdmi
+dw-mipi-dsi
+cec
+rc-core
+pwm_bl
+
+# USB PHY.
+phy-rockchip-usb
