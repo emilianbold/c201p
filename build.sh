@@ -226,9 +226,14 @@ log "[2/7] Partitioning..."
 # KERN-A holds the signed U-Boot kpart (~1-2 MB). 64 MB is far more than enough;
 # the kernel + initrd live on the ext4 ROOTFS and are loaded by U-Boot, so
 # there's no Depthcharge staging-buffer limit to worry about here.
-sgdisk -o -a 8192 \
-    -n 1:8192:+64M -t 1:7F00 -c 1:"KERN-A" \
-    -n 2:0:0       -t 2:8300 -c 2:"ROOTFS" \
+#
+# KERN-A starts at 10 MiB, not earlier: on the C201's internal eMMC the first
+# 8 MiB are permanently write-protected. With nothing in that area, the same
+# layout works on the eMMC and c201p-install-emmc can copy the image there
+# with one dd. Keep these offsets in sync with that script.
+sgdisk -o -a 2048 \
+    -n 1:20480:+64M -t 1:7F00 -c 1:"KERN-A" \
+    -n 2:151552:0   -t 2:8300 -c 2:"ROOTFS" \
     "$IMAGE_FILE"
 cgpt add -i 1 -S 1 -T 5 -P 10 "$IMAGE_FILE"
 
@@ -380,7 +385,8 @@ chroot "$MOUNT_DIR" env DEBIAN_FRONTEND=noninteractive apt-get install -y \
 chroot "$MOUNT_DIR" env DEBIAN_FRONTEND=noninteractive apt-get install -y \
     sudo locales kbd \
     avahi-daemon systemd-zram-generator \
-    vim-tiny less
+    vim-tiny less \
+    cgpt xz-utils    # for c201p-install-emmc
 
 # WiFi. The C201P has no ethernet port, so this is the machine's only network:
 # BCM4354 over SDIO (mmc2). firmware-brcm80211 supplies brcmfmac4354-sdio.bin;
@@ -523,6 +529,10 @@ for d in postinst.d postrm.d; do
         "${MOUNT_DIR}/etc/kernel/${d}/zz-update-extlinux"
 done
 
+# Installer for the internal eMMC (see the README).
+install -Dm755 "$SCRIPT_DIR/files/usr/local/sbin/c201p-install-emmc" \
+    "${MOUNT_DIR}/usr/local/sbin/c201p-install-emmc"
+
 # ── Step 6: Write the U-Boot kpart to KERN-A and configure extlinux boot ──────
 # U-Boot was built and signed in Step 0. Write it to KERN-A, then drop the
 # extlinux.conf that U-Boot reads from the ext4 root to locate and boot Linux.
@@ -624,9 +634,10 @@ cat <<EOF
   Root login:    root / ${ROOT_PASSWORD}
   → Change both passwords on first boot.
 
-  To expand the root partition after flashing a larger card:
+  To expand the root partition after flashing a larger SD card:
     sudo growpart /dev/mmcblk1 2
     sudo resize2fs /dev/mmcblk1p2
+  (SD card only: on the internal eMMC use c201p-install-emmc, never growpart.)
 
   Kernel updates: just apt upgrade and reboot. U-Boot reads /boot directly,
   so no re-signing is needed (the zz-update-extlinux hook refreshes config).

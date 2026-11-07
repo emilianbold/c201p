@@ -1,0 +1,81 @@
+#!/bin/bash
+# SPDX-License-Identifier: ISC
+# c201p-install-emmc — install a c201p image onto the Asus C201's internal eMMC.
+#
+# Usage: sudo c201p-install-emmc debian-c201p.img.xz [/dev/mmcblk0]
+#
+# Run it from c201p booted off an SD card or USB stick; the image can be on
+# either. It erases the eMMC.
+#
+# Why not a plain dd: the first 8 MiB of the C201's eMMC are permanently
+# write-protected and hold a dummy "IGNOREME" primary GPT, so the firmware,
+# U-Boot and Linux (with "gpt" on its command line) use the backup GPT at the
+# end of the disk. The image keeps that area empty (KERN-A starts at 10 MiB),
+# so this script:
+#   1. writes a backup GPT with cgpt, with the image's partition offsets,
+#   2. copies the image from 10 MiB on, unchanged,
+#   3. gives the root filesystem its own UUID and label (emmcroot), so it can't
+#      be mixed up with an SD card holding the same image, and grows it.
+#
+# Repartition this eMMC only with cgpt, never sgdisk/fdisk/parted/growpart:
+# they try to "repair" the protected primary GPT.
+
+set -euo pipefail
+
+KSTART=20480 KSIZE=131072 RSTART=151552   # sectors; must match build.sh
+LABEL=emmcroot
+
+die() { echo "c201p-install-emmc: $*" >&2; exit 1; }
+
+IMG=${1:-}
+D=${2:-/dev/mmcblk0}
+[ -n "$IMG" ] && [ $# -le 2 ] || die "usage: c201p-install-emmc IMAGE.img.xz [TARGET]"
+[ "$(id -u)" -eq 0 ] || die "run as root"
+[ -b "$D" ] || die "$D is not a block device"
+case $(findmnt -no SOURCE /) in "$D"*) die "$D holds the running system; boot from the SD card" ;; esac
+! grep -q "^$D" /proc/mounts /proc/swaps || die "something on $D is mounted"
+[ "$(dd if="$D" bs=512 skip=1 count=1 status=none | head -c 8)" = IGNOREME ] \
+    || die "$D has no IGNOREME partition table header; this is only for the C201's eMMC"
+
+# xz -l also catches a truncated download, before anything is written.
+IMG_BYTES=$(xz --robot -l "$IMG" | awk '$1 == "totals" { print $5 }') && [ -n "$IMG_BYTES" ] \
+    || die "$IMG is not a valid .xz file; re-download it"
+# Images built before KERN-A moved to 10 MiB can't be copied this way.
+[ "$(xz -dc "$IMG" 2>/dev/null | head -c $((KSTART * 512 + 8)) | tail -c 8)" = CHROMEOS ] \
+    || die "$IMG has no KERN-A at 10 MiB; use a newer c201p image"
+TOTAL=$(blockdev --getsz "$D")
+RSIZE=$(( (TOTAL - 34 - RSTART) / 2048 * 2048 ))   # rest of the disk, 1 MiB aligned
+[ $(( IMG_BYTES / 512 )) -le $(( RSTART + RSIZE )) ] || die "the image does not fit on $D"
+
+read -r -p "This erases everything on $D. Type yes to continue: " ans
+[ "$ans" = yes ] || die "aborted, nothing written"
+
+echo "==> Writing the partition table"
+cgpt create "$D"
+cgpt add -i 1 -t kernel -b $KSTART -s $KSIZE -l KERN-A -S 1 -T 5 -P 10 "$D"
+cgpt add -i 2 -t 0FC63DAF-8483-4772-8E79-3D69D8477DE4 -b $RSTART -s "$RSIZE" -l ROOTFS "$D"
+
+echo "==> Copying the image"
+xz -dc "$IMG" | dd of="$D" bs=1M skip=10 seek=10 iflag=fullblock conv=fsync status=progress
+
+echo "==> Relabelling and growing the root filesystem"
+# The running kernel doesn't read the backup GPT, so reach the root partition
+# through a loop device.
+R=$(losetup -f --show -o $((RSTART * 512)) --sizelimit $((RSIZE * 512)) "$D")
+MNT=$(mktemp -d)
+trap 'set +e; mountpoint -q "$MNT" && umount "$MNT"; losetup -d "$R"; rmdir "$MNT"' EXIT
+e2fsck -fp "$R" || [ $? -le 1 ] || die "e2fsck failed"
+tune2fs -U random -L "$LABEL" "$R" >/dev/null
+e2fsck -fp "$R" || [ $? -le 1 ] || die "e2fsck failed"
+resize2fs "$R"
+
+mount "$R" "$MNT"
+sed -i -E "s/^LABEL=root([[:space:]])/LABEL=$LABEL\1/" "$MNT/etc/fstab"
+sed -i -E "s/root=LABEL=root([[:space:]]|\$)/root=LABEL=$LABEL\1/" "$MNT/boot/extlinux/extlinux.conf"
+grep -q "^LABEL=$LABEL[[:space:]]" "$MNT/etc/fstab" \
+    && grep -q "root=LABEL=$LABEL .*gpt" "$MNT/boot/extlinux/extlinux.conf" \
+    || die "could not point fstab and extlinux.conf at LABEL=$LABEL; is this a current c201p image?"
+umount "$MNT"
+sync
+
+echo "==> Done. Power off, remove the SD card, power on and press Ctrl+D."

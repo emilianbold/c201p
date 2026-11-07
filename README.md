@@ -38,6 +38,32 @@ Larger card? Grow the root partition after first boot:
    Ctrl+U again. Depthcharge timing quirk.
 5. LightDM starts automatically. Log in as `user`.
 
+## Installing to the internal eMMC
+
+Boot c201p from the SD card (or USB stick), put the `.img.xz` somewhere it can
+read (the SD card itself or another USB stick), and run:
+
+```bash
+sudo c201p-install-emmc debian-c201p.img.xz
+```
+
+This erases the internal eMMC, including ChromeOS. When it's done, power off,
+remove the SD card, power on and press **Ctrl+D** to boot from the eMMC.
+
+Why it isn't a plain `dd`: the first 8 MiB of the C201's eMMC are permanently
+write-protected and hold a dummy `IGNOREME` partition table header, so
+everything uses the backup partition table at the end of the disk instead. The
+script writes that table with `cgpt`, copies the image from 10 MiB onwards
+(the image leaves the protected area empty), and gives the eMMC's root
+filesystem its own label, `emmcroot`, so it can't be confused with an SD card
+holding the same image.
+
+- U-Boot tries the SD card first, so a c201p SD card left in the slot boots
+  instead of the eMMC.
+- **Change the eMMC's partitions only with `cgpt`.** `sgdisk`, `fdisk`,
+  `parted` and `growpart` try to "repair" the protected partition table.
+- The script needs an image with KERN-A at 10 MiB; older releases are refused.
+
 ## Default credentials
 
 | Account | Password |
