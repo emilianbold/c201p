@@ -66,10 +66,10 @@ holding the same image.
 
 ## Default credentials
 
-| Account | Password |
-|---------|----------|
-| `user` | `trixie` |
-| `root` | `trixie` |
+| Username | Password |
+|----------|----------|
+| `user`   | `trixie` |
+| `root`   | `trixie` |
 
 Change both on first boot: `passwd` (for the current user) and `sudo passwd root`.
 

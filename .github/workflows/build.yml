@@ -163,7 +163,7 @@ jobs:
 
             Boot the Chromebook: press **Ctrl+U** at the developer mode screen.
 
-            Default login: `user` / `trixie` — change passwords on first boot.
+            Default login: username `user`, password `trixie` (root's password is also `trixie`) — change both on first boot.
 
             `debian-c201p-uboot.kpart` is the signed U-Boot binary alone
             (the KERN-A partition contents) — for reflashing just U-Boot

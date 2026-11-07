@@ -630,8 +630,8 @@ cat <<EOF
   U-Boot kpart: ${UBOOT_KPART_FILE} (signed, KERN-A only -- flash with cgpt/dd)
   U-Boot license: ${UBOOT_LICENSE_FILE} (GPL-2.0; this project's own code is ISC, see LICENSE)
 
-  Default login: ${USERNAME} / ${PASSWORD}
-  Root login:    root / ${ROOT_PASSWORD}
+  Default login: username ${USERNAME}, password ${PASSWORD}
+  Root login:    username root, password ${ROOT_PASSWORD}
   → Change both passwords on first boot.
 
   To expand the root partition after flashing a larger SD card:
