@@ -8,7 +8,9 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, which no longer has the
+    # qemu-user-static package (qemu-arm-static) that build.sh relies on.
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
 
     permissions:
@@ -108,13 +110,14 @@ jobs:
       # monotonically-increasing run number, so every non-tag push gets its
       # own permanent tag instead of all builds fighting over one mutable
       # "latest" tag.
+      # Only after a successful build: a failed one would publish an empty release.
       - name: Compute snapshot tag
-        if: ${{ !cancelled() && !startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ success() && !startsWith(github.ref, 'refs/tags/') }}
         id: snapshot
         run: echo "tag=snapshot-$(date -u +%Y%m%dT%H%M%SZ)-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub snapshot release (non-tag pushes)
-        if: ${{ !cancelled() && !startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ success() && !startsWith(github.ref, 'refs/tags/') }}
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.snapshot.outputs.tag }}
